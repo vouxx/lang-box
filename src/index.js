@@ -52,6 +52,12 @@ const { GH_TOKEN, GIST_ID, USERNAME, DAYS } = process.env;
         const isEnd = recentPushEvents.length < pushEvents.length;
         console.log(`${recentPushEvents.length} recent events (after ${fromDate.toISOString()})`);
 
+        if (recentPushEvents.length > 0) {
+          const first = recentPushEvents[0];
+          console.log(`First event repo: ${first.repo.name}`);
+          console.log(`First event commits: ${JSON.stringify(first.payload.commits?.map(c => ({sha: c.sha.slice(0,7), distinct: c.distinct})))}`);
+        }
+
         const results = await Promise.allSettled(
               recentPushEvents.flatMap(({ repo, payload }) =>
                 payload.commits
@@ -75,7 +81,7 @@ const { GH_TOKEN, GIST_ID, USERNAME, DAYS } = process.env;
         }
       }
     } catch (e) {
-      console.log("no more page to load");
+      console.log("Error in event loop:", e.message || e);
     }
 
     console.log(`${commits.length} commits fetched.`);
