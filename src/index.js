@@ -52,16 +52,15 @@ const { GH_TOKEN, GIST_ID, USERNAME, DAYS } = process.env;
         const isEnd = recentPushEvents.length < pushEvents.length;
         console.log(`${recentPushEvents.length} recent events (after ${fromDate.toISOString()})`);
 
-        if (recentPushEvents.length > 0) {
-          const first = recentPushEvents[0];
-          console.log(`First event repo: ${first.repo.name}`);
-          console.log(`First event commits: ${JSON.stringify(first.payload.commits?.map(c => ({sha: c.sha.slice(0,7), distinct: c.distinct})))}`);
+        const withCommits = recentPushEvents.filter(e => e.payload.commits && e.payload.commits.length > 0);
+        console.log(`${withCommits.length} events have commits data`);
+        if (withCommits.length > 0) {
+          console.log(`Sample repo: ${withCommits[0].repo.name}, commits: ${withCommits[0].payload.commits.length}`);
         }
 
         const results = await Promise.allSettled(
               recentPushEvents.flatMap(({ repo, payload }) =>
-                payload.commits
-                  // Ignore duplicated commits
+                (payload.commits || [])
                   .filter((c) => c.distinct === true)
                   .map((c) => api.fetch(`/repos/${repo.name}/commits/${c.sha}`))
               )
