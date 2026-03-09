@@ -25,4 +25,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           GIST_ID: 5be83d2a6d61e5c409fbae7923c85a2b
-          USERNAME: ${{ github.actor }}
+          USERNAME: vouxx
+          DAYS: 30
