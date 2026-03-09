@@ -1,137 +1,75 @@
 import { ApiClient } from "./api.js";
 import { createContent } from "./text.js";
-import { runLinguist } from "./linguist.js";
 
-const { GH_TOKEN, GIST_ID, USERNAME, DAYS } = process.env;
+const { GH_TOKEN, GIST_ID, USERNAME } = process.env;
 
 (async () => {
   try {
-    if (!GH_TOKEN) {
-      throw new Error("GH_TOKEN is not provided.");
-    }
-    if (!GIST_ID) {
-      throw new Error("GIST_ID is not provided.");
-    }
-    if (!USERNAME) {
-      throw new Error("USERNAME is not provided.");
-    }
+    if (!GH_TOKEN) throw new Error("GH_TOKEN is not provided.");
+    if (!GIST_ID) throw new Error("GIST_ID is not provided.");
+    if (!USERNAME) throw new Error("USERNAME is not provided.");
 
     const api = new ApiClient(GH_TOKEN);
-    const username = USERNAME;
-    const days = Math.max(1, Math.min(30, Number(DAYS || 14)));
+    console.log(`username is ${USERNAME}.`);
 
-    console.log(`username is ${username}.`);
-    console.log(`\n`);
-
-    // https://docs.github.com/en/rest/reference/activity
-    // GitHub API supports 300 events at max and events older than 90 days will not be fetched.
-    const maxEvents = 300;
-    const perPage = 100;
-    const pages = Math.ceil(maxEvents / perPage);
-    const fromDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-
-    const commits = [];
-    try {
-      for (let page = 0; page < pages; page++) {
-        // https://docs.github.com/en/developers/webhooks-and-events/github-event-types#pushevent
-        const allEvents = await api.fetch(
-            `/users/${username}/events?per_page=${perPage}&page=${page}`
-          );
-        console.log(`Page ${page}: ${allEvents.length} total events`);
-        const eventTypes = allEvents.map(e => e.type);
-        console.log(`Event types: ${[...new Set(eventTypes)].join(', ')}`);
-
-        const pushEvents = allEvents.filter(
-          ({ type, actor }) => type === "PushEvent" && actor.login === username
-        );
-        console.log(`${pushEvents.length} PushEvents by ${username}`);
-
-        const recentPushEvents = pushEvents.filter(
-          ({ created_at }) => new Date(created_at) > fromDate
-        );
-        const isEnd = recentPushEvents.length < pushEvents.length;
-        console.log(`${recentPushEvents.length} recent events (after ${fromDate.toISOString()})`);
-
-        const withCommits = recentPushEvents.filter(e => e.payload.commits && e.payload.commits.length > 0);
-        console.log(`${withCommits.length} events have commits data`);
-        if (withCommits.length > 0) {
-          console.log(`Sample repo: ${withCommits[0].repo.name}, commits: ${withCommits[0].payload.commits.length}`);
-        }
-
-        const results = await Promise.allSettled(
-              recentPushEvents.flatMap(({ repo, payload }) =>
-                (payload.commits || [])
-                  .filter((c) => c.distinct === true)
-                  .map((c) => api.fetch(`/repos/${repo.name}/commits/${c.sha}`))
-              )
-            );
-        const rejected = results.filter(({ status }) => status === "rejected");
-        if (rejected.length > 0) {
-          console.log(`${rejected.length} commit fetches failed. Sample error: ${rejected[0].reason}`);
-        }
-        commits.push(
-          ...results
-            .filter(({ status }) => status === "fulfilled")
-            .map(({ value }) => value)
-        );
-
-        if (isEnd) {
-          break;
+    // GraphQL로 유저의 모든 레포 언어 통계 가져오기
+    const query = `{
+      user(login: "${USERNAME}") {
+        repositories(first: 100, ownerAffiliations: OWNER, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          nodes {
+            name
+            languages(first: 10, orderBy: {field: SIZE, direction: DESC}) {
+              edges {
+                size
+                node { name }
+              }
+            }
+          }
         }
       }
-    } catch (e) {
-      console.log("Error in event loop:", e.message || e);
+    }`;
+
+    const result = await api.fetchGq(query);
+    const repos = result.data.user.repositories.nodes;
+    console.log(`${repos.length} repositories found.`);
+
+    // 언어별 바이트 합산
+    const langMap = {};
+    for (const repo of repos) {
+      for (const edge of repo.languages.edges) {
+        const name = edge.node.name;
+        langMap[name] = (langMap[name] || 0) + edge.size;
+      }
     }
 
-    console.log(`${commits.length} commits fetched.`);
-    console.log(`\n`);
+    // 정렬 + 퍼센트 계산
+    const total = Object.values(langMap).reduce((a, b) => a + b, 0);
+    const langs = Object.entries(langMap)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([name, size]) => ({
+        name,
+        percent: (size / total) * 100,
+        additions: size,
+        deletions: 0,
+        count: 1,
+      }));
 
-    // https://docs.github.com/en/rest/reference/repos#compare-two-commits
-    const files = commits
-      // Ignore merge commits
-      .filter((c) => c.parents.length <= 1)
-      .flatMap((c) =>
-        c.files.map(
-          ({
-            filename,
-            additions,
-            deletions,
-            changes,
-            status, // added, removed, modified, renamed
-            patch,
-          }) => ({
-            path: filename,
-            additions,
-            deletions,
-            changes,
-            status,
-            patch,
-          })
-        )
-      );
-
-    const langs = await runLinguist(files);
-    console.log(`\n`);
-    langs.forEach((l) =>
-      console.log(
-        `${l.name}: ${l.count} files, ${l.additions + l.deletions} changes`
-      )
-    );
+    console.log(`\nLanguages:`);
+    langs.forEach(l => console.log(`  ${l.name}: ${l.percent.toFixed(1)}%`));
 
     const content =
       langs.length > 0
         ? createContent(langs)
         : "No language data available yet.";
-    console.log(`\n`);
-    console.log(content);
-    console.log(`\n`);
+    console.log(`\n${content}\n`);
 
     const gist = await api.fetch(`/gists/${GIST_ID}`);
     const filename = Object.keys(gist.files)[0];
     await api.fetch(`/gists/${GIST_ID}`, "PATCH", {
       files: {
         [filename]: {
-          filename: `💻 Recent coding in languages`,
+          filename: `💻 Most used languages`,
           content,
         },
       },
