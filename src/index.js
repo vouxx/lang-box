@@ -34,19 +34,23 @@ const { GH_TOKEN, GIST_ID, USERNAME, DAYS } = process.env;
     try {
       for (let page = 0; page < pages; page++) {
         // https://docs.github.com/en/developers/webhooks-and-events/github-event-types#pushevent
-        const pushEvents = (
-          await api.fetch(
+        const allEvents = await api.fetch(
             `/users/${username}/events?per_page=${perPage}&page=${page}`
-          )
-        ).filter(
+          );
+        console.log(`Page ${page}: ${allEvents.length} total events`);
+        const eventTypes = allEvents.map(e => e.type);
+        console.log(`Event types: ${[...new Set(eventTypes)].join(', ')}`);
+
+        const pushEvents = allEvents.filter(
           ({ type, actor }) => type === "PushEvent" && actor.login === username
         );
+        console.log(`${pushEvents.length} PushEvents by ${username}`);
 
         const recentPushEvents = pushEvents.filter(
           ({ created_at }) => new Date(created_at) > fromDate
         );
         const isEnd = recentPushEvents.length < pushEvents.length;
-        console.log(`${recentPushEvents.length} events fetched.`);
+        console.log(`${recentPushEvents.length} recent events (after ${fromDate.toISOString()})`);
 
         const results = await Promise.allSettled(
               recentPushEvents.flatMap(({ repo, payload }) =>
