@@ -48,17 +48,20 @@ const { GH_TOKEN, GIST_ID, USERNAME, DAYS } = process.env;
         const isEnd = recentPushEvents.length < pushEvents.length;
         console.log(`${recentPushEvents.length} events fetched.`);
 
-        commits.push(
-          ...(
-            await Promise.allSettled(
+        const results = await Promise.allSettled(
               recentPushEvents.flatMap(({ repo, payload }) =>
                 payload.commits
                   // Ignore duplicated commits
                   .filter((c) => c.distinct === true)
                   .map((c) => api.fetch(`/repos/${repo.name}/commits/${c.sha}`))
               )
-            )
-          )
+            );
+        const rejected = results.filter(({ status }) => status === "rejected");
+        if (rejected.length > 0) {
+          console.log(`${rejected.length} commit fetches failed. Sample error: ${rejected[0].reason}`);
+        }
+        commits.push(
+          ...results
             .filter(({ status }) => status === "fulfilled")
             .map(({ value }) => value)
         );
@@ -106,7 +109,10 @@ const { GH_TOKEN, GIST_ID, USERNAME, DAYS } = process.env;
       )
     );
 
-    const content = createContent(langs);
+    const content =
+      langs.length > 0
+        ? createContent(langs)
+        : "No language data available yet.";
     console.log(`\n`);
     console.log(content);
     console.log(`\n`);
